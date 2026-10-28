@@ -47,7 +47,7 @@ services:
       - ./models:/app/models:ro
     healthcheck:
       # Real readiness: /status returns 200 only when the engine exists AND its SHA256 matches the manifest.
-      # 5s interval x 2 retries => unhealthy within ~10-13s of corruption or a hung worker.
+      # 5s interval x 2 retries => unhealthy within 10-13s of corruption or a hung worker.
       test: ["CMD", "python", "/app/healthcheck.py", "http://127.0.0.1:9000/status", "200"]
       interval: 5s
       timeout: 3s
@@ -81,8 +81,8 @@ services:
       retries: 3
       start_period: 5s
     networks:
-      - edge_dmz          # published port for operators
-      - sensor_backplane  # internal path to inference_worker and postgres
+      - edge_dmz          
+      - sensor_backplane  
 
 volumes:
   pgdata:
