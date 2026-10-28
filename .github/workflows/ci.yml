@@ -108,7 +108,7 @@ jobs:
       - name: Save image for promotion
         run: docker save "${IMAGE_REPO}:${{ steps.meta.outputs.tag }}" | gzip > image.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: image-${{ steps.meta.outputs.tag }}
           path: image.tar.gz
@@ -122,7 +122,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: site-release
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: image-${{ needs.build.outputs.tag }}
 
@@ -148,7 +148,7 @@ jobs:
           done
           docker image inspect -f '{{join .RepoDigests "\n"}}' "$src" | tee digest.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: promoted-digest-${{ needs.build.outputs.tag }}
           path: digest.txt
