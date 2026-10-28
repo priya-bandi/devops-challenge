@@ -1,0 +1,21 @@
+# Only source, healthcheck and models go into the image
+.git
+.github
+.gitignore
+.dockerignore
+.env
+.env.*
+*.md
+tests/
+docker-compose*.yml
+Dockerfile
+package_airgap.sh
+deploy_airgap.sh
+release*/
+dist/
+*.tar
+*.tar.gz
+*.sha256
+**/__pycache__
+**/*.pyc
+models/.trt_cache/

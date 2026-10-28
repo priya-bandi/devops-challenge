@@ -1,0 +1,95 @@
+name: eoir-stack
+
+# Common hardening for both app services (same image, different command).
+x-app: &app
+  image: ${IMAGE_REPO:-eoir-stack}:${IMAGE_TAG:?set IMAGE_TAG in .env}
+  build:
+    context: .
+  user: "10001:10001"
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  init: true
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:15.10-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - sensor_backplane
+
+  inference_worker:
+    <<: *app
+    command: ["python", "inference_worker/worker.py"]
+    environment:
+      ENGINE_PATH: /app/models/eo_detector_fp16.engine
+      MANIFEST_PATH: /app/models/manifest.json
+      TRT_CACHE_DIR: /tmp/trt_cache
+      WORKER_PORT: "9000"
+    volumes:
+      # Read-only mount: the engine can be swapped or rolled back on site without rebuilding the image
+      - ./models:/app/models:ro
+    healthcheck:
+      # Real readiness: /status returns 200 only when the engine exists AND its SHA256 matches the manifest.
+      # 5s interval x 2 retries => unhealthy within ~10-13s of corruption or a hung worker.
+      test: ["CMD", "python", "/app/healthcheck.py", "http://127.0.0.1:9000/status", "200"]
+      interval: 5s
+      timeout: 3s
+      retries: 2
+      start_period: 10s
+    networks:
+      - sensor_backplane
+
+  vision_api:
+    <<: *app
+    command: ["python", "vision_api/app.py"]
+    environment:
+      APP_PORT: "8000"
+      WORKER_URL: "http://inference_worker:9000"
+      DB_HOST: "postgres"
+      DB_USER: ${POSTGRES_USER:?set in .env}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      DB_NAME: ${POSTGRES_DB:?set in .env}
+    ports:
+      - "8000:8000"
+    depends_on:
+      inference_worker:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Liveness of the API process itself (200 = healthy, 503 = up but degraded)
+      test: ["CMD", "python", "/app/healthcheck.py", "http://127.0.0.1:8000/health", "200", "503"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - edge_dmz          # published port for operators
+      - sensor_backplane  # internal path to inference_worker and postgres
+
+volumes:
+  pgdata:
+
+networks:
+  edge_dmz:
+    driver: bridge
+  sensor_backplane:
+    driver: bridge
+    internal: true

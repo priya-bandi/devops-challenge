@@ -1,0 +1,14 @@
+# Secrets
+.env
+!.env.example
+
+# Release artefacts
+release_v*/
+release_v*.tar.gz
+release_v*.tar.gz.sha256
+dist/
+
+# Python / runtime
+__pycache__/
+*.pyc
+models/.trt_cache/

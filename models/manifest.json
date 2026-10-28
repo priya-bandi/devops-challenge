@@ -1,0 +1,14 @@
+{
+  "model_name": "eo_detector_fp16",
+  "version": "1.4.2",
+  "target_arch": "aarch64",
+  "target_device": "jetson_orin",
+  "gpu_sm": "sm_87",
+  "tensorrt_version": "8.6",
+  "input_resolution": [
+    1920,
+    1080
+  ],
+  "precision": "FP16",
+  "sha256": "0aaf46816a9506a903462a0fbcb4ce8589ce046cd52dfdef6cddf167686e4702"
+}

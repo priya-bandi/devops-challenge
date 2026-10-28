@@ -1,0 +1,154 @@
+name: Site-Release-CI
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: registry.site.local
+  IMAGE_REPO: eoir-stack
+  MAX_IMAGE_BYTES: "230686720"   # 220 MiB
+
+jobs:
+  # 1. Unit tests: any failure stops the pipeline (no "|| true")
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  # 2. Release gate: the model artifact must match its manifest before anything is built
+  verify-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify engine SHA256 against models/manifest.json
+        run: |
+          expected=$(python3 -c "import json; print(json.load(open('models/manifest.json'))['sha256'])")
+          echo "${expected}  models/eo_detector_fp16.engine" | sha256sum --check --strict
+      - name: Validate compose file (no plaintext secrets, all variables resolvable)
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+  # 3. Build once, check image policy, run a real smoke test (incl. the unhealthy transition)
+  build:
+    needs: [ test, verify-artifacts ]
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute immutable tag (<model version>-<git sha>)
+        id: meta
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('models/manifest.json'))['version'])")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${version}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: docker build -t "${IMAGE_REPO}:${{ steps.meta.outputs.tag }}" .
+
+      - name: Image policy (size < 220 MB, non-root user)
+        run: |
+          img="${IMAGE_REPO}:${{ steps.meta.outputs.tag }}"
+          size=$(docker image inspect -f '{{.Size}}' "$img")
+          user=$(docker image inspect -f '{{.Config.User}}' "$img")
+          echo "size=${size} bytes user=${user}"
+          [ "$size" -lt "$MAX_IMAGE_BYTES" ] || { echo "Image too large"; exit 1; }
+          case "${user%%:*}" in ""|root|0) echo "Image must not run as root"; exit 1;; esac
+
+      - name: Smoke test the stack
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          cp .env.example .env
+          sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env
+          sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env
+          docker compose up -d --no-build --wait --wait-timeout 120
+          curl -fsS http://localhost:8000/health | tee /dev/stderr | grep -q '"worker_ready": true'
+          curl -fsS http://localhost:8000/api/v1/detect
+          # Negative test: a corrupted engine must flip inference_worker to unhealthy within 15s
+          cp models/eo_detector_fp16.engine "$RUNNER_TEMP/engine.bak"
+          printf 'corrupt' >> models/eo_detector_fp16.engine
+          cid=$(docker compose ps -q inference_worker)
+          status=""
+          for i in $(seq 1 15); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' "$cid")
+            [ "$status" = "unhealthy" ] && break
+            sleep 1
+          done
+          echo "worker health after corruption: ${status} (${i}s)"
+          [ "$status" = "unhealthy" ]
+          cp "$RUNNER_TEMP/engine.bak" models/eo_detector_fp16.engine
+
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+      - name: Save image for promotion
+        run: docker save "${IMAGE_REPO}:${{ steps.meta.outputs.tag }}" | gzip > image.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ steps.meta.outputs.tag }}
+          path: image.tar.gz
+          retention-days: 7
+
+  # 4. Promotion: only from main or a release tag, only after every gate passed,
+  #    behind a protected environment (manual approval), immutable tags only.
+  promote:
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.SITE_REGISTRY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: site-release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-${{ needs.build.outputs.tag }}
+
+      - name: Load image
+        run: gunzip -c image.tar.gz | docker load
+
+      - name: Log in to site registry
+        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "$REGISTRY" -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+
+      - name: Push immutable tag(s) and record digest
+        run: |
+          src="${IMAGE_REPO}:${{ needs.build.outputs.tag }}"
+          tags="${{ needs.build.outputs.tag }}"
+          # A release tag (e.g. v1.4.2) also publishes the plain version, once
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tags="$tags ${{ needs.build.outputs.version }}"; fi
+          for t in $tags; do
+            dest="${REGISTRY}/${IMAGE_REPO}:${t}"
+            if docker manifest inspect "$dest" > /dev/null 2>&1; then
+              echo "Refusing to overwrite existing tag ${dest}"; exit 1
+            fi
+            docker tag "$src" "$dest"
+            docker push "$dest"
+          done
+          docker image inspect -f '{{join .RepoDigests "\n"}}' "$src" | tee digest.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: promoted-digest-${{ needs.build.outputs.tag }}
+          path: digest.txt
