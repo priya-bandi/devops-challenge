@@ -21,10 +21,10 @@ env:
 jobs:
   # 1. Unit tests: any failure stops the pipeline (no "|| true")
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Run unit tests
@@ -32,9 +32,9 @@ jobs:
 
   # 2. Release gate: the model artifact must match its manifest before anything is built
   verify-artifacts:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Verify engine SHA256 against models/manifest.json
         run: |
           expected=$(python3 -c "import json; print(json.load(open('models/manifest.json'))['sha256'])")
@@ -47,12 +47,12 @@ jobs:
   # 3. Build once, check image policy, run a real smoke test (incl. the unhealthy transition)
   build:
     needs: [ test, verify-artifacts ]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Compute immutable tag (<model version>-<git sha>)
         id: meta
@@ -119,7 +119,7 @@ jobs:
   promote:
     needs: build
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && vars.SITE_REGISTRY_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: site-release
     steps:
       - uses: actions/download-artifact@v4
