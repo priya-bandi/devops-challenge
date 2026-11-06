@@ -13,7 +13,7 @@ Line numbers refer to the **original** files as received.
 | 5 | `docker-compose.yml:42-43` | API only on `edge_dmz`; worker and DB only on internal `sensor_backplane` → no route | API joins both networks; worker + DB stay internal-only |
 | 6 | `docker-compose.yml:22` | Healthcheck `echo … \|\| exit 0` always passes, so a dead/corrupt worker shows healthy | Real probe of `/status` via `healthcheck.py` (HTTP 200 only); `interval 5s × retries 2` → unhealthy in ≤ 15 s |
 | 7 | `docker-compose.yml:39-41` | `depends_on` without conditions = start order only, not readiness | `condition: service_healthy` on worker and Postgres (`pg_isready` healthcheck added) |
-| 8 | `docker-compose.yml:5-7,36` | Production DB password hardcoded and committed | Moved to uncommitted `.env` (`${VAR:?}` fails fast if missing); `.env.example` committed. **Password must be rotated** — it is in git history |
+| 8 | `docker-compose.yml:5-7,36` | Production DB password hardcoded and committed | Moved to uncommitted `.env` (`${VAR:?}` fails fast if missing); `.env.example` committed. **Password must be rotated** it is in git history |
 | 9 | `docker-compose.yml:20` | Unused `AWS_SECRET_ACCESS_KEY` committed | Removed; key must be revoked |
 | 10 | `docker-compose.yml:8-9` | Postgres published on host `5432` | Port removed; DB reachable only on the internal network |
 | 11 | `docker-compose.yml:14,30` / `3` | Two untagged `build: .` images; floating `postgres:15-alpine` | One image `eoir-stack:${IMAGE_TAG}` shared by both services; Postgres pinned `15.10-alpine` |
