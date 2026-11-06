@@ -29,7 +29,7 @@ Line numbers refer to the **original** files as received.
 
 Note: if the worker process dies, its container exits and `restart: unless-stopped` brings it back; the API reports `degraded`/503 meanwhile. The healthcheck covers the hung or corrupted case.
 
-## 2. Field rollback — bad `eo_detector_fp16.engine` (target ≤ 15 min)
+## 2. Field rollback : bad `eo_detector_fp16.engine` (target ≤ 15 min)
 
 | T+ | Action |
 |---|---|
