@@ -37,7 +37,7 @@ Note: if the worker process dies, its container exits and `restart: unless-stopp
 | 3-5 | **Decide.** Engine at fault → roll back the model. Do not debug in the field |
 | 5-7 | **Quarantine.** `cd /opt/eoir-stack/current && mkdir -p /opt/eoir-stack/quarantine/$(date +%s) && cp models/eo_detector_fp16.engine models/manifest.json /opt/eoir-stack/quarantine/<ts>/` |
 | 7-10 | **Restore last good pair.** Engine and manifest always move **together**: `cp /opt/eoir-stack/previous/models/{eo_detector_fp16.engine,manifest.json} models/` (no `previous` yet → take both from the last-known-good bundle on the transfer media), then verify: `sha256sum models/eo_detector_fp16.engine` equals `"sha256"` in `models/manifest.json` |
-| 10-12 | **Restart worker only.** `docker compose -p eoir-stack --env-file /opt/eoir-stack/.env restart inference_worker` (API needs no restart — it re-checks per request) |
+| 10-12 | **Restart worker only.** `docker compose -p eoir-stack --env-file /opt/eoir-stack/.env restart inference_worker` (API needs no restart, it re-checks per request) |
 | 12-14 | **Verify.** `ps` shows `healthy`; `curl -fsS localhost:8000/health` → `worker_ready:true`; `curl -fsS localhost:8000/api/v1/detect` → 200 |
 | 14-15 | **Record.** Log time, operator, both hashes; attach quarantined files to a defect for the lab |
 
